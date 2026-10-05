@@ -31,8 +31,8 @@ def to_csv(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
 def audit_export(auditor: Auditor) -> tuple[list[str], list[list[str]]]:
     """Columns and rows for the dosing audit trail."""
 
-    columns = ["time", "kind", "detail", "id"]
-    rows = [[entry.time, entry.kind, entry.detail, entry.id] for entry in auditor.entries()]
+    columns = ["time", "kind", "detail", "id", "ref"]
+    rows = [[entry.time, entry.kind, entry.detail, entry.id, entry.ref] for entry in auditor.entries()]
     return columns, rows
 
 
@@ -40,3 +40,36 @@ def telemetry_export(telemetry: Telemetry) -> tuple[list[str], list[list[object]
     """Columns and rows for the telemetry counters."""
 
     return ["metric", "value"], [[key, value] for key, value in telemetry.as_dict().items()]
+
+
+def inventory_movement_export(movements: list[dict[str, object]]) -> tuple[list[str], list[list[object]]]:
+    """Columns and rows for batch receipts, consumption and disposal."""
+
+    columns = [
+        "time",
+        "type",
+        "document_id",
+        "request_id",
+        "chemical",
+        "lot_id",
+        "amount",
+        "expires_on",
+        "audit_id",
+        "reason",
+    ]
+    rows = [
+        [
+            movement.get("time", ""),
+            movement.get("type", ""),
+            movement.get("document_id", ""),
+            movement.get("request_id", ""),
+            movement.get("chemical", ""),
+            movement.get("lot_id", ""),
+            movement.get("amount", ""),
+            movement.get("expires_on", ""),
+            movement.get("audit_id", ""),
+            movement.get("reason", ""),
+        ]
+        for movement in movements
+    ]
+    return columns, rows

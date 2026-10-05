@@ -61,6 +61,22 @@ class StoreCase(unittest.TestCase):
             clear_commands(store, "list")
             self.assertEqual(load_commands(store, "list"), [])
 
+    def test_atomic_transaction_commits_together_and_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(f"{tmp}/state.json")
+            store.atomic(lambda data: data.update({"one": "1", "two": "2"}))
+            self.assertEqual(store.get("two"), ("2", True))
+
+            def fail(data: dict[str, str]) -> None:
+                data["two"] = "changed"
+                data["three"] = "3"
+                raise RuntimeError("boom")
+
+            with self.assertRaises(RuntimeError):
+                store.atomic(fail)
+            self.assertEqual(store.get("two"), ("2", True))
+            self.assertEqual(store.get("three"), ("", False))
+
     def test_epoch_wraps_and_stays_positive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = Store.open(f"{tmp}/state.json")
@@ -494,7 +510,7 @@ class ReportingCase(unittest.TestCase):
             auditor = Auditor(Store.open(f"{tmp}/state.json"))
             auditor.record("coagulant", "2.0000")
             columns, rows = audit_export(auditor)
-            self.assertEqual(columns, ["time", "kind", "detail", "id"])
+            self.assertEqual(columns, ["time", "kind", "detail", "id", "ref"])
             self.assertEqual(rows[0][1], "coagulant")
             self.assertEqual(rows[0][2], "2.0000")
 

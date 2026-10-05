@@ -299,22 +299,74 @@ class ConsoleCase(unittest.TestCase):
         self.assertEqual(body["totals"]["chlorine"], 0.5)
 
     def test_inventory_and_metrics_routes(self) -> None:
-        status, body = self.call("POST", "/inventory/receive", {"chemical": "chlorine", "lot_id": "L1", "amount": 40.0})
+        status, body = self.call(
+            "POST",
+            "/inventory/receipts",
+            {
+                "document_id": "GRN-1",
+                "items": [
+                    {
+                        "chemical": "chlorine",
+                        "lot_id": "L1",
+                        "amount": 40.0,
+                        "received_on": "2026-10-05",
+                        "expires_on": "2027-10-05",
+                    },
+                    {
+                        "chemical": "chlorine",
+                        "lot_id": "L2",
+                        "amount": 30.0,
+                        "received_on": "2026-10-04",
+                        "expires_on": "2028-02-01",
+                    },
+                ],
+            },
+        )
         self.assertEqual(status, 200)
-        self.assertEqual(body["lot"]["remaining"], 40.0)
-        self.call("POST", "/inventory/receive", {"chemical": "chlorine", "lot_id": "L2", "amount": 30.0})
+        self.assertEqual(body["receipt"]["status"], "received")
 
         status, body = self.call("GET", "/inventory")
         self.assertEqual(status, 200)
         self.assertEqual(body["balance"], 70.0)
+        self.assertEqual(body["available_balance"], 70.0)
         self.assertEqual(body["needs_reorder"], [])
+        self.assertEqual(body["allocation_strategy"], "FEFO_EXPIRY_FIRST__FIFO_TIEBREAK")
 
-        status, body = self.call("POST", "/inventory/consume", {"chemical": "chlorine", "amount": 50.0})
+        status, body = self.call(
+            "POST",
+            "/inventory/consume",
+            {"chemical": "chlorine", "amount": 50.0, "request_id": "dose-1"},
+        )
         self.assertEqual(body["balance"], 20.0)
+        self.assertEqual([item["lot_id"] for item in body["allocations"]], ["L1", "L2"])
+
+        status, body = self.call(
+            "POST",
+            "/inventory/consume",
+            {"chemical": "chlorine", "amount": 50.0, "request_id": "dose-1"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["lot_id"] for item in body["allocations"]], ["L1", "L2"])
+
+        status, body = self.call(
+            "POST",
+            "/inventory/dispense",
+            {"chemical": "chlorine", "amount": 10.0, "request_id": "strict-dose-1"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["lot_id"] for item in body["allocations"]], ["L2"])
+        status, body = self.call(
+            "POST",
+            "/inventory/dispense",
+            {"chemical": "chlorine", "amount": 50.0},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("request_id", body["error"])
+
         _, body = self.call("GET", "/inventory")
         self.assertEqual(body["needs_reorder"], ["chlorine"])
         self.assertEqual(body["lots"][0]["consumed"], 40.0)
-        self.assertEqual(body["lots"][1]["consumed"], 10.0)
+        self.assertEqual(body["lots"][1]["consumed"], 20.0)
 
         status, body = self.call("POST", "/inventory/reorder-level", {"level": 10.0})
         self.assertEqual(body["reorder_level"], 10.0)
@@ -322,9 +374,17 @@ class ConsoleCase(unittest.TestCase):
         inventory_check = [c for c in checks["checks"] if c["name"] == "inventory"][0]
         self.assertEqual(inventory_check["status"], "ok")
 
-        status, body = self.call("POST", "/inventory/consume", {"chemical": "chlorine", "amount": 100.0})
+        status, body = self.call(
+            "POST",
+            "/inventory/consume",
+            {"chemical": "chlorine", "amount": 100.0, "request_id": "dose-2"},
+        )
         self.assertEqual(status, 400)
         self.assertIn("insufficient", body["error"])
+
+        status, body = self.call("GET", "/inventory/movements")
+        self.assertEqual(status, 200)
+        self.assertIn("consume", [movement["type"] for movement in body["movements"]])
 
         status, body = self.call("GET", "/metrics")
         self.assertGreater(body["requests"], 0)
@@ -333,6 +393,75 @@ class ConsoleCase(unittest.TestCase):
         self.assertTrue(body["reset"])
         _, body = self.call("GET", "/metrics")
         self.assertEqual(body["requests"], 1)
+
+    def test_inventory_receipt_conflict_and_recovery_routes(self) -> None:
+        payload = {
+            "document_id": "GRN-X",
+            "items": [
+                {
+                    "chemical": "coagulant",
+                    "lot_id": "C1",
+                    "amount": 12.0,
+                    "received_on": "2026-10-04",
+                    "expires_on": "2026-10-20",
+                }
+            ],
+        }
+        status, body = self.call("POST", "/inventory/receipts", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["receipt"]["status"], "received")
+
+        status, body = self.call("POST", "/inventory/receipts", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["receipt"]["status"], "received")
+
+        changed = json.loads(json.dumps(payload))
+        changed["items"][0]["amount"] = 13.0
+        status, body = self.call("POST", "/inventory/receipts", changed)
+        self.assertEqual(status, 409)
+        self.assertEqual(body["receipt"]["status"], "conflict")
+
+        status, body = self.call("POST", "/inventory/receipts/discard", {"document_id": "GRN-X"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["receipt"]["status"], "discarded")
+
+        pending = {
+            "document_id": "GRN-P",
+            "items": [
+                {
+                    "chemical": "coagulant",
+                    "lot_id": "P1",
+                    "amount": 5.0,
+                    "received_on": "2026-10-04",
+                    "expires_on": "2026-10-20",
+                },
+                {
+                    "chemical": "coagulant",
+                    "lot_id": "P2",
+                    "amount": 7.0,
+                    "received_on": "2026-10-04",
+                    "expires_on": "2026-10-21",
+                },
+            ],
+        }
+        self.call("POST", "/inventory/receipts", pending)
+
+        def simulate_partial_failure(data: dict[str, str]) -> None:
+            receipts = json.loads(data["inventory:receipts"])
+            for receipt in receipts:
+                if receipt["document_id"] == "GRN-P":
+                    receipt["status"] = "pending"
+            data["inventory:receipts"] = json.dumps(receipts)
+            lots = [lot for lot in json.loads(data["inventory:lots"]) if lot["lot_id"] != "P2"]
+            data["inventory:lots"] = json.dumps(lots)
+
+        self.store.atomic(simulate_partial_failure)
+        status, body = self.call("POST", "/inventory/receipts/recover", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["recovered"][0]["status"], "received")
+        status, body = self.call("GET", "/inventory/receipts", {"document_id": "GRN-P"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["receipt"]["status"], "received")
 
     def test_export_routes(self) -> None:
         self.call("POST", "/coag/dose", {"flow": 5.0})
@@ -345,6 +474,27 @@ class ConsoleCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("metric,value", body)
         self.assertIn("filter_beds", body)
+
+        self.call(
+            "POST",
+            "/inventory/receipts",
+            {
+                "document_id": "GRN-EXPORT",
+                "items": [
+                    {
+                        "chemical": "chlorine",
+                        "lot_id": "EXP1",
+                        "amount": 3.0,
+                        "received_on": "2026-10-04",
+                        "expires_on": "2026-10-20",
+                    }
+                ],
+            },
+        )
+        status, body = self.call("GET", "/export/inventory")
+        self.assertEqual(status, 200)
+        self.assertIn("document_id", body)
+        self.assertIn("GRN-EXPORT", body)
 
     def test_reset_store_and_errors(self) -> None:
         status, body = self.call("POST", "/ops/reset-store", {})

@@ -29,7 +29,9 @@ class Telemetry:
     schedule_due: int
     trend_samples: int
     inventory_balance: float
+    inventory_available: float
     inventory_alerts: int
+    inventory_expired_alerts: int
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -51,13 +53,16 @@ class Telemetry:
             "schedule_due": self.schedule_due,
             "trend_samples": self.trend_samples,
             "inventory_balance": self.inventory_balance,
+            "inventory_available": self.inventory_available,
             "inventory_alerts": self.inventory_alerts,
+            "inventory_expired_alerts": self.inventory_expired_alerts,
         }
 
 
 def collect(rt: Runtime) -> Telemetry:
     """Read every counter without mutating the control state."""
 
+    inventory_state = rt.inventory.state()
     return Telemetry(
         store_keys=rt.store.count(),
         filter_beds=rt.bank.count(),
@@ -76,6 +81,8 @@ def collect(rt: Runtime) -> Telemetry:
         ph_stable=rt.stabilizer.is_stable(),
         schedule_due=len(rt.scheduler.due(rt.bank)),
         trend_samples=rt.trend.stats().samples,
-        inventory_balance=rt.inventory.balance(),
-        inventory_alerts=len(rt.inventory.needs_reorder()),
+        inventory_balance=inventory_state.balance,
+        inventory_available=inventory_state.available_balance,
+        inventory_alerts=len(inventory_state.alerts),
+        inventory_expired_alerts=sum(1 for alert in inventory_state.alerts if alert.get("type") == "expired"),
     )

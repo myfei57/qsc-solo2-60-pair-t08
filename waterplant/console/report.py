@@ -15,6 +15,7 @@ def text_report(rt: Runtime) -> str:
     describe = collect_describe(rt)
     telemetry = collect_telemetry(rt)
     line = treatment_line()
+    inventory_state = rt.inventory.state()
     rows = [
         "waterplant control report",
         f"pipeline: {describe['pipeline']}",
@@ -47,7 +48,9 @@ def text_report(rt: Runtime) -> str:
         f"intake trend samples={telemetry.trend_samples}",
         (
             f"inventory balance={telemetry.inventory_balance:.4f} "
-            f"alerts={telemetry.inventory_alerts}"
+            f"available={telemetry.inventory_available:.4f} alerts={telemetry.inventory_alerts} "
+            f"strategy={inventory_state.strategy}"
         ),
+        f"inventory alert messages={[alert['message'] for alert in inventory_state.alerts]}",
     ]
     return "\n".join(rows) + "\n"

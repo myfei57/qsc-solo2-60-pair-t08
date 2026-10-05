@@ -7,7 +7,6 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from waterplant.store.commands import append_command, load_commands
 from waterplant.store.store import Store
 
 from .report import AuditState
@@ -23,9 +22,13 @@ class Entry:
     time: str
     kind: str
     detail: str
+    ref: str = ""
 
     def as_dict(self) -> dict[str, str]:
-        return {"id": self.id, "time": self.time, "kind": self.kind, "detail": self.detail}
+        payload = {"id": self.id, "time": self.time, "kind": self.kind, "detail": self.detail}
+        if self.ref:
+            payload["ref"] = self.ref
+        return payload
 
 
 class Auditor:
@@ -34,33 +37,66 @@ class Auditor:
     def __init__(self, store: Store) -> None:
         self._store = store
 
-    def record(self, kind: str, detail: str) -> Entry:
-        entry = Entry(
-            id=uuid.uuid4().hex,
+    @staticmethod
+    def make_entry(kind: str, detail: str, ref: str = "", entry_id: str | None = None) -> Entry:
+        return Entry(
+            id=entry_id or uuid.uuid4().hex,
             time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             kind=kind,
             detail=detail,
+            ref=ref,
         )
-        append_command(self._store, AUDIT_KEY, json.dumps(entry.as_dict(), ensure_ascii=False))
+
+    def record(self, kind: str, detail: str, ref: str = "") -> Entry:
+        entry = self.make_entry(kind, detail, ref)
+        self.append_entry(entry)
         return entry
 
-    def entries(self) -> list[Entry]:
-        entries: list[Entry] = []
-        for item in load_commands(self._store, AUDIT_KEY):
+    def append_entry(self, entry: Entry) -> None:
+        """Append an entry in one atomic store transaction."""
+
+        def mutate(data: dict[str, str]) -> None:
             try:
-                payload = json.loads(item)
+                parsed = json.loads(data.get(AUDIT_KEY, "[]"))
             except ValueError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            entries.append(
-                Entry(
-                    id=str(payload.get("id", "")),
-                    time=str(payload.get("time", "")),
-                    kind=str(payload.get("kind", "")),
-                    detail=str(payload.get("detail", "")),
-                )
-            )
+                parsed = []
+            items = parsed if isinstance(parsed, list) else []
+            items.append(entry.as_dict())
+            data[AUDIT_KEY] = json.dumps(items, ensure_ascii=False)
+
+        self._store.atomic(mutate)
+
+    @staticmethod
+    def _entry_from_payload(payload: dict[str, object]) -> Entry:
+        return Entry(
+            id=str(payload.get("id", "")),
+            time=str(payload.get("time", "")),
+            kind=str(payload.get("kind", "")),
+            detail=str(payload.get("detail", "")),
+            ref=str(payload.get("ref", "")),
+        )
+
+    def entries(self) -> list[Entry]:
+        raw, present = self._store.get(AUDIT_KEY)
+        if not present:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        entries: list[Entry] = []
+        for item in parsed:
+            if isinstance(item, dict):
+                payload = item
+            else:
+                try:
+                    payload = json.loads(str(item))
+                except ValueError:
+                    continue
+            if isinstance(payload, dict):
+                entries.append(self._entry_from_payload(payload))
         return entries
 
     def last(self) -> Entry | None:

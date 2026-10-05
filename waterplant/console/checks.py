@@ -29,11 +29,15 @@ def run_checks(rt: Runtime) -> list[dict[str, str]]:
         checks.append({"name": "ph", "status": "ok", "detail": "ph in the stable band"})
     else:
         checks.append({"name": "ph", "status": "warn", "detail": "ph outside the stable band"})
-    alerts = rt.inventory.needs_reorder()
-    if alerts:
-        checks.append(
-            {"name": "inventory", "status": "warn", "detail": "reorder " + ", ".join(alerts)}
-        )
+    alerts = rt.inventory.alerts()
+    critical = [alert for alert in alerts if alert.get("severity") == "critical"]
+    warning = [alert for alert in alerts if alert.get("severity") != "critical"]
+    if critical:
+        detail = "; ".join(str(alert.get("message", alert.get("type"))) for alert in critical[:3])
+        checks.append({"name": "inventory", "status": "fail", "detail": detail})
+    elif warning:
+        detail = "; ".join(str(alert.get("message", alert.get("type"))) for alert in warning[:3])
+        checks.append({"name": "inventory", "status": "warn", "detail": detail})
     else:
-        checks.append({"name": "inventory", "status": "ok", "detail": "stock above reorder level"})
+        checks.append({"name": "inventory", "status": "ok", "detail": "stock above reorder level and no expiry alerts"})
     return checks

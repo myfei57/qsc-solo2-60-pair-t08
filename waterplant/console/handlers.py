@@ -9,11 +9,16 @@ from waterplant.clearwell import validate_level
 from waterplant.filter import validate_zone
 from waterplant.flow import calibrate_meter, validate_factor
 from waterplant.intake import DEFAULT_WINDOW, Sensor, validate_flow
-from waterplant.inventory import validate_quantity
+from waterplant.inventory import (
+    InventoryConflict,
+    validate_positive_quantity,
+    validate_quantity,
+    validate_warning_days,
+)
 from waterplant.ns import Stage, treatment_line
 from waterplant.ph import validate_ph
 from waterplant.quota import Quota, check_quota, validate_amount
-from waterplant.reporting import audit_export, telemetry_export, to_csv
+from waterplant.reporting import audit_export, inventory_movement_export, telemetry_export, to_csv
 from waterplant.scheduler import validate_threshold
 from waterplant.store import export_state
 
@@ -344,28 +349,133 @@ def inventory_state(server: "Server", request: Request) -> Response:
 
 
 def inventory_receive(server: "Server", request: Request) -> Response:
+    """Backward-compatible single-lot route; canonical callers use receipts."""
+
     amount = request.float_field("amount")
-    validate_quantity(amount)
-    lot = server.runtime.inventory.receive(
-        request.str_field("chemical"), request.str_field("lot_id"), amount
-    )
+    validate_positive_quantity(amount)
+    try:
+        lot = server.runtime.inventory.receive(
+            chemical=request.str_field("chemical"),
+            lot_id=request.str_field("lot_id"),
+            amount=amount,
+            expires_on=request.str_field("expires_on"),
+            received_on=request.str_field("received_on") or None,
+            document_id=request.str_field("document_id"),
+        )
+    except InventoryConflict as exc:
+        raise RequestError(409, str(exc)) from exc
     return json_response({"lot": lot.as_dict()})
+
+
+def inventory_submit_receipt(server: "Server", request: Request) -> Response:
+    items = request.payload.get("items", [])
+    if not isinstance(items, list):
+        raise RequestError(400, "field items must be a list")
+    if isinstance(items, list):
+        try:
+            receipt = server.runtime.inventory.submit_receipt(
+                request.str_field("document_id"), items
+            )
+        except InventoryConflict as exc:
+            raise RequestError(409, str(exc)) from exc
+        status_code = 409 if receipt.get("status") == "conflict" else 200
+        return json_response({"receipt": receipt}, status_code)
+    raise RequestError(400, "field items must be a list")
+
+
+def inventory_list_receipts(server: "Server", request: Request) -> Response:
+    document_id = request.str_field("document_id")
+    if document_id:
+        receipt = server.runtime.inventory.receipt(document_id)
+        if receipt is None:
+            raise RequestError(404, f"receipt {document_id} not found")
+        return json_response({"receipt": receipt})
+    return json_response({"receipts": server.runtime.inventory.receipts()})
+
+
+def inventory_recover_receipts(server: "Server", request: Request) -> Response:
+    return json_response({"recovered": server.runtime.inventory.recover_receipts()})
+
+
+def inventory_discard_receipt(server: "Server", request: Request) -> Response:
+    try:
+        receipt = server.runtime.inventory.discard_receipt(
+            request.str_field("document_id"), request.str_field("note", "manual warehouse confirmation")
+        )
+    except InventoryConflict as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response({"receipt": receipt})
 
 
 def inventory_consume(server: "Server", request: Request) -> Response:
     amount = request.float_field("amount")
-    validate_quantity(amount)
+    validate_positive_quantity(amount)
     chemical = request.str_field("chemical")
-    consumed = server.runtime.inventory.consume(chemical, amount)
-    return json_response(
-        {"consumed": consumed, "balance": server.runtime.inventory.balance(chemical)}
-    )
+    request_id = request.str_field("request_id")
+    try:
+        if request_id:
+            body = server.runtime.inventory.dispense(chemical, amount, request_id)
+        else:
+            allocations = server.runtime.inventory.consume_allocations(chemical, amount)
+            body = {
+                "consumed": amount,
+                "balance": server.runtime.inventory.available_balance(chemical),
+                "allocations": [allocation.as_dict() for allocation in allocations],
+            }
+    except InventoryConflict as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response(body)
+
+
+def inventory_dispense(server: "Server", request: Request) -> Response:
+    """Strict batch dosing route; caller idempotency key is mandatory."""
+
+    amount = request.float_field("amount")
+    validate_positive_quantity(amount)
+    try:
+        body = server.runtime.inventory.dispense(
+            request.str_field("chemical"), amount, request.str_field("request_id")
+        )
+    except InventoryConflict as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response(body)
 
 
 def inventory_reorder_level(server: "Server", request: Request) -> Response:
     level = request.float_field("level")
     validate_quantity(level, "level")
     return json_response({"reorder_level": server.runtime.inventory.set_reorder_level(level)})
+
+
+def inventory_expiry_warning(server: "Server", request: Request) -> Response:
+    days = request.int_field("days")
+    validate_warning_days(days)
+    return json_response({"expiry_warning_days": server.runtime.inventory.set_expiry_warning_days(days)})
+
+
+def inventory_sweep_expired(server: "Server", request: Request) -> Response:
+    return json_response({"expired": server.runtime.inventory.sweep_expired()})
+
+
+def inventory_dispose_lot(server: "Server", request: Request) -> Response:
+    try:
+        lot = server.runtime.inventory.dispose_lot(
+            request.str_field("chemical"),
+            request.str_field("lot_id"),
+            request.str_field("note", "manual disposal"),
+        )
+    except InventoryConflict as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response({"lot": lot.as_dict()})
+
+
+def inventory_movements(server: "Server", request: Request) -> Response:
+    return json_response({"movements": server.runtime.inventory.movements()})
+
+
+def export_inventory_movements(server: "Server", request: Request) -> Response:
+    columns, rows = inventory_movement_export(server.runtime.inventory.movements())
+    return csv_response(to_csv(columns, rows))
 
 
 def metrics(server: "Server", request: Request) -> Response:
