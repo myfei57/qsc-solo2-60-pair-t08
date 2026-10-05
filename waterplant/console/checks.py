@@ -36,4 +36,64 @@ def run_checks(rt: Runtime) -> list[dict[str, str]]:
         )
     else:
         checks.append({"name": "inventory", "status": "ok", "detail": "stock above reorder level"})
+
+    batch_state = rt.batch_service.state()
+    batch_alerts = batch_state["alerts"]
+    expired = [row for row in batch_alerts if row["kind"] == "expired"]
+    near = [row for row in batch_alerts if row["kind"] == "near_expiry"]
+    low = [row for row in batch_alerts if row["kind"] == "low_stock"]
+    if expired:
+        checks.append(
+            {
+                "name": "batches-expired",
+                "status": "fail",
+                "detail": "expired batches: " + ", ".join(row["batch_id"] for row in expired),
+            }
+        )
+    else:
+        checks.append({"name": "batches-expired", "status": "ok", "detail": "no expired stock"})
+    if near:
+        checks.append(
+            {
+                "name": "batches-near-expiry",
+                "status": "warn",
+                "detail": "expiring soon: " + ", ".join(row["batch_id"] for row in near),
+            }
+        )
+    else:
+        checks.append(
+            {"name": "batches-near-expiry", "status": "ok", "detail": "nothing near expiry"}
+        )
+    if low:
+        checks.append(
+            {
+                "name": "batches-low-stock",
+                "status": "warn",
+                "detail": "low stock: " + ", ".join(row["chemical"] for row in low),
+            }
+        )
+    else:
+        checks.append({"name": "batches-low-stock", "status": "ok", "detail": "stock levels healthy"})
+    pending_quarantine = batch_state["quarantine_pending"]
+    pending_inbound = batch_state["inbound_pending"]
+    if pending_quarantine:
+        checks.append(
+            {
+                "name": "batches-quarantine",
+                "status": "warn",
+                "detail": f"{pending_quarantine} conflicting resend(s) awaiting manual review",
+            }
+        )
+    else:
+        checks.append({"name": "batches-quarantine", "status": "ok", "detail": "no quarantined resends"})
+    if pending_inbound:
+        checks.append(
+            {
+                "name": "batches-inbound",
+                "status": "warn",
+                "detail": f"{pending_inbound} interrupted inbound order(s) need recovery",
+            }
+        )
+    else:
+        checks.append({"name": "batches-inbound", "status": "ok", "detail": "no pending inbound orders"})
     return checks

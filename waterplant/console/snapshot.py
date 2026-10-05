@@ -28,4 +28,5 @@ def collect(rt: Runtime) -> dict[str, object]:
         "schedule": rt.scheduler.state(rt.bank).as_dict(),
         "trend": rt.trend.stats().as_dict(),
         "inventory": rt.inventory.state().as_dict(),
+        "batches": rt.batch_service.state(),
     }

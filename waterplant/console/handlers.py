@@ -18,6 +18,7 @@ from waterplant.scheduler import validate_threshold
 from waterplant.store import export_state
 
 from . import checks, history, ops
+from . import batches_api
 from . import describe as describe_module
 from . import simulate as simulate_module
 from . import snapshot as snapshot_module
@@ -366,6 +367,70 @@ def inventory_reorder_level(server: "Server", request: Request) -> Response:
     level = request.float_field("level")
     validate_quantity(level, "level")
     return json_response({"reorder_level": server.runtime.inventory.set_reorder_level(level)})
+
+
+def batches_state(server: "Server", request: Request) -> Response:
+    return batches_api.batch_state(server.runtime, request)
+
+
+def batches_list(server: "Server", request: Request) -> Response:
+    return batches_api.batch_list(server.runtime, request)
+
+
+def batches_inbound_submit(server: "Server", request: Request) -> Response:
+    return batches_api.inbound_submit(server.runtime, request)
+
+
+def batches_inbound_list(server: "Server", request: Request) -> Response:
+    return batches_api.inbound_list(server.runtime, request)
+
+
+def batches_inbound_recover(server: "Server", request: Request) -> Response:
+    return batches_api.inbound_recover(server.runtime, request)
+
+
+def batches_consume(server: "Server", request: Request) -> Response:
+    return batches_api.consume_submit(server.runtime, request)
+
+
+def batches_consumption_list(server: "Server", request: Request) -> Response:
+    return batches_api.consumption_list(server.runtime, request)
+
+
+def batches_scrap(server: "Server", request: Request) -> Response:
+    return batches_api.scrap_submit(server.runtime, request)
+
+
+def batches_expiry_refresh(server: "Server", request: Request) -> Response:
+    return batches_api.expiry_refresh(server.runtime, request)
+
+
+def batches_alerts(server: "Server", request: Request) -> Response:
+    return batches_api.alerts_list(server.runtime, request)
+
+
+def batches_quarantine_list(server: "Server", request: Request) -> Response:
+    return batches_api.quarantine_list(server.runtime, request)
+
+
+def batches_quarantine_resolve(server: "Server", request: Request) -> Response:
+    return batches_api.quarantine_resolve(server.runtime, request)
+
+
+def batches_ledger(server: "Server", request: Request) -> Response:
+    return batches_api.ledger_list(server.runtime, request)
+
+
+def batches_audit(server: "Server", request: Request) -> Response:
+    return batches_api.batch_audit_list(server.runtime, request)
+
+
+def batches_near_expiry(server: "Server", request: Request) -> Response:
+    return batches_api.near_expiry_config(server.runtime, request)
+
+
+def batches_reorder(server: "Server", request: Request) -> Response:
+    return batches_api.reorder_config(server.runtime, request)
 
 
 def metrics(server: "Server", request: Request) -> Response:

@@ -49,5 +49,7 @@ def text_report(rt: Runtime) -> str:
             f"inventory balance={telemetry.inventory_balance:.4f} "
             f"alerts={telemetry.inventory_alerts}"
         ),
+        f"batches: {describe['batches']}",
+        f"batch alerts={[alert['kind'] + ':' + str(alert.get('batch_id') or alert.get('chemical')) for alert in rt.batch_service.state()['alerts']]}",
     ]
     return "\n".join(rows) + "\n"

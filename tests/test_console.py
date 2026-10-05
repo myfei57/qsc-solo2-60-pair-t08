@@ -45,6 +45,11 @@ class ConsoleCase(unittest.TestCase):
             "intake",
             "ph",
             "inventory",
+            "batches-expired",
+            "batches-near-expiry",
+            "batches-low-stock",
+            "batches-quarantine",
+            "batches-inbound",
         })
 
         status, snapshot = self.call("GET", "/snapshot")
@@ -68,6 +73,7 @@ class ConsoleCase(unittest.TestCase):
                 "schedule",
                 "trend",
                 "inventory",
+                "batches",
             },
         )
 

@@ -28,4 +28,16 @@ def collect(rt: Runtime) -> dict[str, str]:
         "schedule": rt.scheduler.describe(rt.bank),
         "trend": rt.trend.describe(),
         "inventory": rt.inventory.describe(),
+        "batches": _describe_batches(rt),
     }
+
+
+def _describe_batches(rt: Runtime) -> str:
+    state = rt.batch_service.state()
+    kinds = [alert["kind"] for alert in state["alerts"]]
+    return (
+        f"batches policy={state['consumption_policy'].split(' ')[0]} "
+        f"chemicals={len(state['chemicals'])} alerts={kinds} "
+        f"quarantine_pending={state['quarantine_pending']} "
+        f"inbound_pending={state['inbound_pending']}"
+    )

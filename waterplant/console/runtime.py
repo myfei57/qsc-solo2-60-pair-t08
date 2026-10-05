@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from waterplant.audit import Auditor
 from waterplant.backwash import Controller
+from waterplant.batches import BatchService, Clock
 from waterplant.chlor import Doser as ChlorDoser
 from waterplant.clearwell import Well
 from waterplant.coag import Doser as CoagDoser
@@ -25,6 +26,7 @@ class Runtime:
         bank = Bank()
         coag_doser = CoagDoser(store)
         self.store = store
+        self.clock = Clock()
         self.flow_repository = FlowRepository(store)
         self.inlet = InletController()
         self.outlet = InletController()
@@ -41,3 +43,4 @@ class Runtime:
         self.scheduler = Scheduler(store)
         self.trend = Trend(store)
         self.inventory = Inventory(store)
+        self.batch_service = BatchService(store, self.clock)
